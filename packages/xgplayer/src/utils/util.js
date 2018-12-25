@@ -129,8 +129,11 @@ util.deepCopy = function (dst, src) {
   }
 }
 util.getBgImage = function (el) {
-  let a = document.createElement('a')
   let url = (el.currentStyle || window.getComputedStyle(el, null)).backgroundImage
+  if(!url || url == 'none') {
+    return '';
+  }
+  let a = document.createElement('a')
   a.href = url.replace(/url\("|"\)/g, '')
   return a.href
 }
