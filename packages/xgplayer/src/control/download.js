@@ -1,6 +1,6 @@
 import Player from '../player'
 import {getAbsoluteURL} from '../utils/url'
-import downloadUtil from 'downloadjs'
+import downloadUtil from '../utils/download'
 
 const download = function () {
   const player = this
@@ -20,7 +20,9 @@ const download = function () {
     e.stopPropagation()
     // must pass an absolute url for download
     const url = getAbsoluteURL(player.config.url)
+    console.log('url:', url);
     downloadUtil(url)
+    console.log('download complete')
   })
 
   downloadEl.addEventListener('mouseenter', (e) => {
