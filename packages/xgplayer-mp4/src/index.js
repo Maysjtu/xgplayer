@@ -56,12 +56,14 @@ let mp4player = function () {
   player.config._mainURL = mainURL
   player.config._backupURL = backupURL
   let loadData = (i = 0, time = player.currentTime) => {
+    // console.log('load data')
     if (player.timer) {
       clearTimeout(player.timer)
     }
     time = Math.max(time, player.currentTime)
     player.timer = setTimeout(function () {
       player.mp4.seek(time + i * 0.1).then(buffer => {
+        console.log('seek: ', time + i * 0.1)
         if (buffer) {
           let mse = player.mse
           mse.updating = true

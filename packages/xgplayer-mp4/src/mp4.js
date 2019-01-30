@@ -7,6 +7,7 @@ import Task from './media/task'
 import Download from './util/download'
 import util from './util'
 import Errors from './error'
+import { P } from 'core-js/modules/_export'
 
 class MP4 {
   /**
@@ -17,6 +18,7 @@ class MP4 {
   constructor (url, chunkSize = Math.pow(25, 4)) {
     EventEmitter(this)
     this.url = url
+    console.log('get mp4:', url)
     this.CHUNK_SIZE = chunkSize
     this.init(url)
     this.once('moovReady', this.moovParse.bind(this))
@@ -142,9 +144,9 @@ class MP4 {
       duration: mvhd.duration / mvhd.timeScale,
       timeScale: mvhd.timeScale,
       videoDuration,
-      videoTimeScale,
+      videoTimeScale: videoTimeScale,
       audioDuration,
-      audioTimeScale,
+      audioTimeScale: audioTimeScale,
       endTime: Math.min(videoDuration, audioDuration),
       sps,
       pps,
@@ -158,6 +160,8 @@ class MP4 {
       sampleRate,
       audioConfig: decoderConfig
     }
+    console.log('boxes:', this._boxes)
+    console.log('meta:', this.meta)
   }
 
   /**
@@ -244,11 +248,13 @@ class MP4 {
     let stts = util.findBox(trak, 'stts') // sample-time
     let stco = util.findBox(trak, 'stco') // chunk-offset
     let ctts = util.findBox(trak, 'ctts') // offset-compositime
+    // mdat start, mp4的mdat盒子的 start
     let mdatStart = this.mdatStart
     let samples = []
     end = end !== undefined
       ? end
       : stsz.entries.length
+
     if (start instanceof Array) {
       start.forEach((item, idx) => {
         samples.push({
@@ -284,6 +290,7 @@ class MP4 {
     }
     let videoTrak = this.videoTrak
     let stss = util.findBox(videoTrak, 'stss')
+    // 关键帧序号
     let frames = this.getSamplesByOrders('video', stss.entries.map(item => item - 1))
     this._videoFrames = frames
     return frames
@@ -323,6 +330,7 @@ class MP4 {
     let videoFrames = this.videoKeyFrames
 
     let audioFrames = this.audioKeyFrames
+
     videoFrames.every((item, idx) => {
       let nowTime = item.time.time
 
@@ -383,44 +391,83 @@ class MP4 {
     }
   }
   addFragment (data) {
+    if (MP4.isAdded > 1) {
+      return
+    }
+    MP4.isAdded++
+
     let buffer = new Buffer()
     buffer.write(FMP4.moof(data))
     buffer.write(FMP4.mdat(data))
     this.cache.write(buffer.buffer)
+    // console.log('addFragment')
     return buffer.buffer
   }
   createFragment (mdatData, start, fragIndex) {
     let self = this
+    console.log('fragment: ', this)
+
     let resBuffers = []
     this.bufferCache.add(fragIndex)
     {
       let framesIndex = self.videoKeyFrames.map((item) => item.idx)
       let _samples = self.getSamplesByOrders('video', framesIndex[fragIndex], framesIndex[fragIndex + 1])
       let samples = _samples.map((item, idx) => {
-        return {
+        let val = {
           size: item.size,
           duration: item.time.duration,
           offset: item.time.offset,
+          dts: item.time.time,
+          pts: item.time.time + item.time.offset,
           buffer: new Uint8Array(mdatData.slice(item.offset - start, item.offset - start + item.size)),
           key: idx === 0
         }
+        // console.log('video frame:', val)
+        return val
       })
-      resBuffers.push(this.addFragment({id: 1, time: _samples[0].time.time, firstFlags: 0x2000000, flags: 0xf01, samples}))
+
+      // samples = samples.filter(function (val) {
+      //   return val.key
+      // })
+
+      console.log('current time: ', _samples[0].time.time)
+      resBuffers.push(
+        this.addFragment({
+          id: 1, // 表示为视频
+          // 设置fragment的解码初始时间BaseMediaDecodeTime
+          time: _samples[0].time.time,
+          // time: 0,
+          firstFlags: 0x2000000,
+          flags: 0xf01,
+          samples
+        })
+      )
     }
     let _samples = this.getSamplesByOrders(
       'audio', this.audioKeyFrames[fragIndex].order, this.audioKeyFrames[fragIndex + 1]
         ? this.audioKeyFrames[fragIndex + 1].order
         : undefined)
     let samples = _samples.map((item, idx) => {
-      return {
+      let val = {
         size: item.size,
         duration: item.time.duration,
         offset: item.time.offset,
+        dts: item.time.time,
+        pts: item.time.time + item.time.offset,
         buffer: new Uint8Array(mdatData.slice(item.offset - start, item.offset - start + item.size)),
         key: idx === 0
       }
+      // console.log('audio frame:', val)
+      return val
     })
-    resBuffers.push(this.addFragment({id: 2, time: _samples[0].time.time, firstFlags: 0x00, flags: 0x701, samples: samples}))
+    resBuffers.push(this.addFragment({
+      id: 2, // 表示为音频
+      time: _samples[0].time.time,
+      firstFlags: 0x00,
+      flags: 0x701,
+      samples: samples
+    })
+    )
 
     let bufferSize = 0
     resBuffers.every(item => {
@@ -558,5 +605,6 @@ class MP4 {
     return Promise.resolve(buffer)
   }
 }
+MP4.isAdded = 0
 
 export default MP4

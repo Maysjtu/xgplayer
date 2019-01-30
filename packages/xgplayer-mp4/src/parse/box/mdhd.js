@@ -21,6 +21,7 @@ Box.mdhd = function () {
     this.timescale = stream.readUint32()
     this.duration = stream.readUint32()
   }
+  // this.timescale = this.timescale * 2
   this.language = stream.readUint16()
   stream.readUint16()
   delete this.subBox

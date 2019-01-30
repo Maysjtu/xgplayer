@@ -26,10 +26,21 @@ class FMP4 {
     return buffer.buffer
   }
   static moov (data) {
+    console.log('fmp4 data:', data)
+    console.log('timescale: ', data.videoTimeScale)
+    data.videoTimeScale = data.videoTimeScale
+    data.audioTimeScale = data.audioTimeScale
+    data.timeScale = data.timeScale
+    // data.sampleRate = data.sampleRate * 2
+    console.log('x2')
+
     let buffer = new Buffer(); let size = 8
+    console.log('add duration')
+    // data.duration = data.duration + 10
     let mvhd = FMP4.mvhd(data.duration, data.timeScale)
     let trak1 = FMP4.videoTrak(data)
     let trak2 = FMP4.audioTrak(data)
+
     let mvex = FMP4.mvex(data.duration, data.timeScale);
     [mvhd, trak1, trak2, mvex].forEach(item => {
       size += item.byteLength
@@ -40,8 +51,10 @@ class FMP4 {
   static mvhd (duration, timescale) {
     let buffer = new Buffer()
     duration *= timescale
+
     const upperWordDuration = Math.floor(duration / (UINT32_MAX + 1))
     const lowerWordDuration = Math.floor(duration % (UINT32_MAX + 1))
+
     let bytes = new Uint8Array([
       0x01, // version 1
       0x00, 0x00, 0x00, // flags
@@ -103,11 +116,18 @@ class FMP4 {
       pixelRatio: data.pixelRatio,
       width: data.width,
       height: data.height
+    })
+    let edts = FMP4.edts({
+      // duration: data.videoDuration * data.videoTimeScale,
+      videoTimeScale: data.videoTimeScale,
+      timescale: data.timeScale,
+      duration: data.videoDuration * data.timeScale,
+      mediaTime: -1
     });
-    [tkhd, mdia].forEach(item => {
+    [tkhd, mdia, edts].forEach(item => {
       size += item.byteLength
     })
-    buffer.write(FMP4.size(size), FMP4.type('trak'), tkhd, mdia)
+    buffer.write(FMP4.size(size), FMP4.type('trak'), tkhd, mdia, edts)
     return buffer.buffer
   }
   static audioTrak (data) {
@@ -128,6 +148,7 @@ class FMP4 {
       samplerate: data.sampleRate,
       audioConfig: data.audioConfig
     });
+
     [tkhd, mdia].forEach(item => {
       size += item.byteLength
     })
@@ -192,17 +213,46 @@ class FMP4 {
     buffer.write(FMP4.size(8 + content.byteLength), FMP4.type('tkhd'), content)
     return buffer.buffer
   }
-  static edts (data) {
-    let buffer = new Buffer(); let duration = data.duration; let mediaTime = data.mediaTime
-    buffer.write(FMP4.size(36), FMP4.type('edts'))
-    // elst
-    buffer.write(FMP4.size(28), FMP4.type('elst'))
-    buffer.write(new Uint8Array([
-      0x00, 0x00, 0x00, 0x01, // entry count
-      (duration >> 24) & 0xff, (duration >> 16) & 0xff, (duration >> 8) & 0xff, duration & 0xff,
+  static stsd (data) {
+    let buffer = new Buffer(); let content
+    if (data.type === 'audio') {
+      // if (!data.isAAC && data.codec === 'mp4') {
+      //     content = FMP4.mp3(data);
+      // } else {
+      //
+      // }
+      // 支持mp4a
+      content = FMP4.mp4a(data)
+    } else {
+      content = FMP4.avc1(data)
+    }
+    buffer.write(FMP4.size(16 + content.byteLength), FMP4.type('stsd'), FMP4.extension(0, 0), new Uint8Array([0x00, 0x00, 0x00, 0x01]), content)
+    return buffer.buffer
+  }
+  static elst (data) {
+    let buffer = new Buffer()
+    let duration = data.duration
+    let mediaTime = data.mediaTime
+    console.log('elst: ', data)
+    let content = new Uint8Array([
+      0x00, 0x00, 0x00, 0x02, // entry count
+
+      ((10 * data.timescale) >> 24) & 0xff, ((10 * data.timescale) >> 16) & 0xff, ((10 * data.timescale) >> 8) & 0xff, (10 * data.timescale) & 0xff,
       (mediaTime >> 24) & 0xff, (mediaTime >> 16) & 0xff, (mediaTime >> 8) & 0xff, mediaTime & 0xff,
-      0x00, 0x00, 0x00, 0x01 // media rate
-    ]))
+      0x00, 0x01, 0x00, 0x00, // media rate
+
+      (duration >> 24) & 0xff, (duration >> 16) & 0xff, (duration >> 8) & 0xff, duration & 0xff,
+      (0 >> 24) & 0xff, (0 >> 16) & 0xff, (0 >> 8) & 0xff, 0 & 0xff,
+      0x00, 0x01, 0x00, 0x00 // media rate
+    ])
+    buffer.write(FMP4.size(8 + 4 + content.byteLength), FMP4.type('elst'), FMP4.extension(0, 0), content)
+    return buffer.buffer
+  }
+  static edts (data) {
+    console.log('edts: ', data)
+    let buffer = new Buffer()
+    let content = FMP4.elst(data)
+    buffer.write(FMP4.size(8 + content.byteLength), FMP4.type('edts'), content)
     return buffer.buffer
   }
   static mdia (data) {
@@ -318,22 +368,6 @@ class FMP4 {
       size += item.byteLength
     })
     buffer.write(FMP4.size(size), FMP4.type('stbl'), stsd, stts, stsc, stsz, stco)
-    return buffer.buffer
-  }
-  static stsd (data) {
-    let buffer = new Buffer(); let content
-    if (data.type === 'audio') {
-      // if (!data.isAAC && data.codec === 'mp4') {
-      //     content = FMP4.mp3(data);
-      // } else {
-      //
-      // }
-      // 支持mp4a
-      content = FMP4.mp4a(data)
-    } else {
-      content = FMP4.avc1(data)
-    }
-    buffer.write(FMP4.size(16 + content.byteLength), FMP4.type('stsd'), FMP4.extension(0, 0), new Uint8Array([0x00, 0x00, 0x00, 0x01]), content)
     return buffer.buffer
   }
   static mp4a (data) {
@@ -507,7 +541,24 @@ class FMP4 {
     buffer.write(FMP4.size(8 + content.byteLength), FMP4.type('trex'), content)
     return buffer.buffer
   }
+  /**
+   *
+   * @param {
+   *  firstFlags: 33554432
+   *  flags: 3841
+   *  id: 1 // 1为视频 2为音频
+   *  samples: [{
+   *    buffer: Uint8Array(46818)
+   *    duration: 1 // 时长
+   *    key: true  // 是否为关键帧
+   *    offset: 2  // pts = dts + offset
+   *    size: 46818 // 大小
+   *  }]
+   *  time: 0 // BaseMediaDecodeTime
+   * } data
+   */
   static moof (data) {
+    console.log('moof:', data)
     let buffer = new Buffer(); let size = 8
     let mfhd = FMP4.mfhd()
     let traf = FMP4.traf(data);
@@ -521,13 +572,16 @@ class FMP4 {
     let buffer = new Buffer()
     let content = Buffer.writeUint32(FMP4.sequence)
     FMP4.sequence += 1
+    // console.log('sequence:', FMP4.sequence)
     buffer.write(FMP4.size(16), FMP4.type('mfhd'), FMP4.extension(0, 0), content)
     return buffer.buffer
   }
   static traf (data) {
     let buffer = new Buffer(); let size = 8
     let tfhd = FMP4.tfhd(data.id)
-    let tfdt = FMP4.tfdt(data.time)
+    let tfdt = FMP4.tfdt(data.time, data.id)
+    // console.log('data.time:', data.time)
+
     let sdtp = FMP4.sdtp(data)
     let trun = FMP4.trun(data, sdtp.byteLength);
     [tfhd, tfdt, sdtp, trun].forEach(item => {
@@ -542,11 +596,21 @@ class FMP4 {
     buffer.write(FMP4.size(16), FMP4.type('tfhd'), FMP4.extension(0, 0), content)
     return buffer.buffer
   }
-  static tfdt (time) {
+  static tfdt (time, id) {
+    console.log('time: ', time)
+    console.log('decode time:', FMP4.videoDecodeTime)
+    console.log('decode time:', FMP4.audioDecodeTime)
+
+    if (id === 1) {
+      time = FMP4.videoDecodeTime
+    } else {
+      time = FMP4.audioDecodeTime
+    }
     let buffer = new Buffer()
     let upper = Math.floor(time / (UINT32_MAX + 1))
 
     let lower = Math.floor(time % (UINT32_MAX + 1))
+
     buffer.write(FMP4.size(20), FMP4.type('tfdt'), FMP4.extension(1, 0), Buffer.writeUint32(upper), Buffer.writeUint32(lower))
     return buffer.buffer
   }
@@ -568,14 +632,21 @@ class FMP4 {
     let offset = Buffer.writeUint32(8 + 8 + 16 + 8 + 16 + 20 + 12 + 4 + 4 + ceil * data.samples.length + sdtpLength)
     buffer.write(FMP4.size(20 + ceil * data.samples.length), FMP4.type('trun'), FMP4.extension(0, data.flags), sampleCount, offset)
     data.samples.forEach((item, idx) => {
+      // if (item.dts <= 140) {
+      //   item.duration = 0
+      // }
       buffer.write(Buffer.writeUint32(item.duration))
       buffer.write(Buffer.writeUint32(item.size))
       if (id === 1) {
         buffer.write(Buffer.writeUint32(item.key ? 0x02000000 : 0x01010000))
         buffer.write(Buffer.writeUint32(item.offset))
+        FMP4.videoDecodeTime += item.duration
       } else {
         buffer.write(Buffer.writeUint32(0x1000000))
+        FMP4.audioDecodeTime += item.duration
       }
+      // sample_composition_time_offset
+      // buffer.write(Buffer.writeUint32(1))
     })
     return buffer.buffer
   }
@@ -583,6 +654,8 @@ class FMP4 {
     let buffer = new Buffer()
     buffer.write(FMP4.size(12 + data.samples.length), FMP4.type('sdtp'), FMP4.extension(0, 0))
     data.samples.forEach(item => {
+      // 32: 00100000  0 2 0 0   this sample does not depend on others (I picture)
+      // 16: 00010000  0 1 0 0   this sample does depend on others (not an I picture)
       buffer.write(new Uint8Array(data.id === 1 ? [item.key ? 32 : 16] : [16]))
     })
     return buffer.buffer
@@ -601,5 +674,7 @@ class FMP4 {
 }
 
 FMP4.sequence = 1
+FMP4.videoDecodeTime = 0
+FMP4.audioDecodeTime = 0
 
 export default FMP4
